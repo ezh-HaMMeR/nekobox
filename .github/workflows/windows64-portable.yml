@@ -18,6 +18,12 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+      - name: Restore dependency cache
+        id: cpp-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg_cache
+          key: nekobox-windows64-vcpkg-2026.07.29-v1
       - name: C++ dependencies
         uses: qr243vbi/vcpkg-action@c42d93c144b9dd8daa198094f67fb4205c112699
         with:
@@ -26,6 +32,12 @@ jobs:
           revision: '2026.07.29'
           vcpkg-subdir: vcpkg-deps
           token: ${{ github.token }}
+      - name: Save dependency cache before compilation
+        if: steps.cpp-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg_cache
+          key: nekobox-windows64-vcpkg-2026.07.29-v1
       - name: Qt
         uses: qr243vbi/qt6windows7@aa73dc1aa33989d09e5823532bccb1d31e39bb64
         with:
