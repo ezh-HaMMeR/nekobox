@@ -92,6 +92,7 @@ on:
         required: false
 jobs:
   get-tag-and-changelog:
+    if: github.repository == 'qr243vbi/nekobox' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
       actions: read
@@ -647,6 +648,5 @@ jobs:
             bash chocolatey_push.sh
             popd
           fi
-
 
 

@@ -238,12 +238,15 @@ endif()
 # ----------------------------
 
 # run gen/update_libs.sh
-run_go_command("${GO_SOURCE_DIR}/server/gen" env "THRIFT_COMPILER=${THRIFT_COMPILER}" bash update_libs.sh)
+option(GENERATE_GO_RPC "Regenerate the checked-in Go RPC sources" ON)
+if(GENERATE_GO_RPC)
+    run_go_command("${GO_SOURCE_DIR}/server/gen" env "THRIFT_COMPILER=${THRIFT_COMPILER}" bash update_libs.sh)
+endif()
 
 # get VERSION_SINGBOX
 execute_process(
     COMMAND ${CMAKE_COMMAND} -E chdir "${GO_SOURCE_DIR}/server"
-            "${GOCMD}" list -m -f {{.Version}} github.com/sagernet/sing-box
+            "${GOCMD}" list -m -f "{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}" github.com/sagernet/sing-box
     WORKING_DIRECTORY ${GO_SOURCE_DIR}
     OUTPUT_VARIABLE VERSION_SINGBOX
     OUTPUT_STRIP_TRAILING_WHITESPACE
@@ -255,6 +258,50 @@ set(LDFLAGS
 
 run_go_command("${GO_SOURCE_DIR}/server" ${GO_TIDY_CMD})
 run_go_command("${GO_SOURCE_DIR}/server" ${GO_VENDOR_CMD})
+
+set(GO_OVERLAY_FLAG "")
+if(GOOS STREQUAL "windows")
+    if(GO_MOD_VENDOR)
+        set(GO_WIREGUARD_DIR "${GO_SOURCE_DIR}/server/vendor/github.com/sagernet/wireguard-go")
+    else()
+        execute_process(
+            COMMAND "${GOCMD}" mod download github.com/sagernet/wireguard-go
+            WORKING_DIRECTORY "${GO_SOURCE_DIR}/server"
+            RESULT_VARIABLE _wireguard_result
+        )
+        if(NOT _wireguard_result EQUAL 0)
+            message(FATAL_ERROR "Could not download the pinned WireGuard module")
+        endif()
+        execute_process(
+            COMMAND "${GOCMD}" list -mod=readonly -m -f "{{.Dir}}" github.com/sagernet/wireguard-go
+            WORKING_DIRECTORY "${GO_SOURCE_DIR}/server"
+            OUTPUT_VARIABLE GO_WIREGUARD_DIR OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE _wireguard_result
+        )
+        if(NOT _wireguard_result EQUAL 0 OR GO_WIREGUARD_DIR STREQUAL "")
+            message(FATAL_ERROR "Download the pinned WireGuard module before configuring")
+        endif()
+        # Go forbids overlays inside GOMODCACHE. Copy this one pinned module
+        # into the build directory and replace it only in a build-local modfile.
+        file(COPY "${GO_WIREGUARD_DIR}/" DESTINATION "${CMAKE_BINARY_DIR}/wireguard-source")
+        set(GO_WIREGUARD_DIR "${CMAKE_BINARY_DIR}/wireguard-source")
+        configure_file("${GO_SOURCE_DIR}/server/go.mod" "${CMAKE_BINARY_DIR}/core-overlay.mod" COPYONLY)
+        configure_file("${GO_SOURCE_DIR}/server/go.sum" "${CMAKE_BINARY_DIR}/core-overlay.sum" COPYONLY)
+        execute_process(
+            COMMAND "${GOCMD}" mod edit "-modfile=${CMAKE_BINARY_DIR}/core-overlay.mod"
+                "-replace=github.com/sagernet/wireguard-go=${GO_WIREGUARD_DIR}"
+            WORKING_DIRECTORY "${GO_SOURCE_DIR}/server"
+            RESULT_VARIABLE _wireguard_result
+        )
+        if(NOT _wireguard_result EQUAL 0)
+            message(FATAL_ERROR "Could not create build-local WireGuard replacement")
+        endif()
+        list(APPEND GO_MOD_FLAG "-modfile=${CMAKE_BINARY_DIR}/core-overlay.mod")
+    endif()
+    set(GO_OVERLAY_DIR "${CMAKE_BINARY_DIR}/wireguard-overlay")
+    include("${CMAKE_CURRENT_SOURCE_DIR}/patches/wireguard/overlay.cmake")
+    set(GO_OVERLAY_FLAG "-overlay=${GO_OVERLAY_DIR}/overlay.json")
+endif()
 
 
 if (GOOS STREQUAL "linux")
@@ -308,10 +355,11 @@ endif()
 add_custom_command(
     OUTPUT ${DESTDIR}/nekobox_core${EXE_SUFFIX}
     DEPENDS ${WRAPPER_DEP_FILE}
+        "${CMAKE_CURRENT_SOURCE_DIR}/patches/wireguard/ipv4_fallback_windows.go"
+        "${CMAKE_CURRENT_SOURCE_DIR}/patches/wireguard/overlay.cmake"
     COMMAND ${CMAKE_COMMAND} -E env ${GO_ENV}
 			${CMAKE_COMMAND} -E chdir ${GO_SOURCE_DIR}/server
-            "${GOCMD}" build ${GO_MOD_FLAG} -buildmode=pie -buildvcs=false -v -o ${DESTDIR}/nekobox_core${EXE_SUFFIX} -trimpath -ldflags "${LDFLAGS}" -tags "${TAGS}"
+            "${GOCMD}" build ${GO_MOD_FLAG} ${GO_OVERLAY_FLAG} -buildmode=pie -buildvcs=false -v -o ${DESTDIR}/nekobox_core${EXE_SUFFIX} -trimpath -ldflags "${LDFLAGS}" -tags "${TAGS}"
 )
 
 add_custom_target(core_server ALL DEPENDS "${DESTDIR}/nekobox_core${EXE_SUFFIX}")
-

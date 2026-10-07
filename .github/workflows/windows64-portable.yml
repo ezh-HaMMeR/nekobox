@@ -1,0 +1,106 @@
+name: Windows64 portable dev
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  portable:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: core/server/go.sum
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: C++ dependencies
+        uses: qr243vbi/vcpkg-action@c42d93c144b9dd8daa198094f67fb4205c112699
+        with:
+          pkgs: thrift boost-filesystem boost-dll boost-headers boost-bimap cpr leveldb yaml-cpp quickjs-ng
+          triplet: x64-windows
+          revision: '2026.07.29'
+          vcpkg-subdir: vcpkg-deps
+          token: ${{ github.token }}
+      - name: Qt
+        uses: qr243vbi/qt6windows7@aa73dc1aa33989d09e5823532bccb1d31e39bb64
+        with:
+          version: 6.10.0_x86_64
+      - name: Configure
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content FORK_VERSION -Raw).Trim()
+          "INPUT_VERSION=$version" >> $env:GITHUB_ENV
+          $deps = "$env:GITHUB_WORKSPACE/vcpkg-deps/installed/x64-windows"
+          $thrift = "$deps/tools/thrift/thrift.exe"
+          $env:PATH = "$deps/bin;$deps/tools/thrift;$env:PATH"
+          cmake -S . -B build/gui -G Ninja "-DCMAKE_TOOLCHAIN_FILE=$env:GITHUB_WORKSPACE/vcpkg-deps/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows -DVCPKG_MANIFEST_MODE=OFF "-DCMAKE_PREFIX_PATH=$env:QT6_DIR" "-DTHRIFT_COMPILER=$thrift" -DCMAKE_BUILD_TYPE=Release -DBUILD_GO_PARTS=OFF -DSKIP_UPDATER=ON "-DNKR_VERSION=$version" "-DNKR_DEFAULT_VERSION=$version"
+          if ($LASTEXITCODE) { throw 'GUI configuration failed' }
+          cmake -S core -B build/core -G Ninja -DGOOS=windows -DGOARCH=amd64 -DSKIP_UPDATER=ON -DGO_MOD_TIDY=OFF -DGO_MOD_VENDOR=OFF -DGENERATE_GO_RPC=OFF "-DTHRIFT_COMPILER=$thrift"
+          if ($LASTEXITCODE) { throw 'Core configuration failed' }
+      - name: Regression tests
+        shell: pwsh
+        run: ./core/patches/wireguard/test.ps1
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake --build build/gui --parallel 4
+          if ($LASTEXITCODE) { throw 'GUI build failed' }
+          cmake --build build/core --parallel 4
+          if ($LASTEXITCODE) { throw 'Core build failed' }
+      - name: Package portable
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dest = "$env:GITHUB_WORKSPACE/deployment/nekobox"
+          New-Item -ItemType Directory -Force $dest | Out-Null
+          Copy-Item build/gui/nekobox.exe,build/core/nekobox_core.exe -Destination $dest
+          Get-ChildItem build/gui -Filter '*.dll' | Copy-Item -Destination $dest
+          Get-ChildItem vcpkg-deps/installed/x64-windows/bin -Filter '*.dll' | Copy-Item -Destination $dest
+          Copy-Item res/public -Destination "$dest/public" -Recurse
+          Get-ChildItem build/gui -Filter '*.qm' | Copy-Item -Destination "$dest/public"
+          Copy-Item res/languages.txt -Destination "$dest/public"
+          Copy-Item srslist.json -Destination $dest
+          $env:PATH = "$env:QT6_DIR/bin;$env:PATH"
+          windeployqt "$dest/nekobox.exe" --release --no-translations --no-opengl-sw
+          if ($LASTEXITCODE) { throw 'Qt deployment failed' }
+          gh release download v26.9.9 --repo XTLS/Xray-core --pattern Xray-windows-64.zip --dir build/xray
+          if ($LASTEXITCODE) { throw 'Xray download failed' }
+          Expand-Archive build/xray/Xray-windows-64.zip build/xray/extracted
+          Copy-Item build/xray/extracted/xray.exe -Destination $dest
+          $cronet = (Get-ChildItem "$env:USERPROFILE/go/pkg/mod/github.com/sagernet/cronet-go/lib/windows_amd64*" -Filter '*.dll' -Recurse | Select-Object -First 1).FullName
+          if (!$cronet) { throw 'Pinned Cronet library not found' }
+          Copy-Item $cronet -Destination "$dest/libcronet.dll"
+          Copy-Item LICENSE -Destination $dest
+          @"
+          Version: $env:INPUT_VERSION
+          Commit: $env:GITHUB_SHA
+          Platform: windows-amd64
+          Go: 1.27.1
+          Qt: 6.10.0
+          "@ | Set-Content -Encoding utf8 "$dest/BUILD-INFO.txt"
+          $coreVersion = & "$dest/nekobox_core.exe" sing-box version 2>&1
+          if ($LASTEXITCODE -or ($coreVersion -join "`n") -notmatch 'v?1.14.1-extended-2.7.2') { throw "Unexpected core version: $coreVersion" }
+          & "$dest/xray.exe" version
+          if ($LASTEXITCODE) { throw 'Xray startup failed' }
+          Push-Location deployment
+          try {
+            $zip = "nekobox-$env:INPUT_VERSION-windows64.zip"
+            Compress-Archive nekobox $zip -CompressionLevel Optimal
+            $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $zip" | Set-Content -Encoding ascii "$zip.sha256"
+          } finally { Pop-Location }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows64-portable
+          path: |
+            deployment/*.zip
+            deployment/*.sha256
+          if-no-files-found: error

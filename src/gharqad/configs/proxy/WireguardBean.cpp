@@ -122,7 +122,7 @@ namespace Configs {
     bool WireguardBean::TryParseJson(const Configs::Data::Node& obj)
     {
         using namespace Configs::From_Json;
-        enableAmnezia(obj["type"].toString() == "awg");
+        enableAmnezia(obj["type"].toString() == "awg" || obj["amnezia"].isObject());
         if (is_amnezia){
             return TryParseJsonAwg(obj);
         }
@@ -366,37 +366,41 @@ CoreObjOutboundBuildResult WireguardBean::BuildCoreObjSingBoxAwg() const {
         peers << peer;
 
     QJsonObject outbound{
-        {"type", "awg"},
+        // The extended core exposes AWG through its WireGuard endpoint.
+        {"type", "wireguard"},
         {"address", QListStr2QJsonArray(localAddress)},
         {"private_key", privateKey},
         {"peers", peers},
         {"mtu", MTU},
 //        {"listen_port", entity->serverPort},
-        {"useIntegratedTun", useSystemInterface}
+        {"system", useSystemInterface}
     };
 
-    // AmneziaWG params
+    // Keep the stored profile format unchanged; only the core schema changes.
+    QJsonObject amnezia;
     {
-        outbound["jc"] = junk_packet_count;
-        outbound["jmin"] = junk_packet_min_size;
-        outbound["jmax"] = junk_packet_max_size;
+        amnezia["jc"] = junk_packet_count;
+        amnezia["jmin"] = junk_packet_min_size;
+        amnezia["jmax"] = junk_packet_max_size;
 
-        outbound["s1"] = init_packet_junk_size;
-        outbound["s2"] = response_packet_junk_size;
-        outbound["s3"] = cookie_reply_junk_size;
-        outbound["s4"] = transport_packet_junk_size;
+        amnezia["s1"] = init_packet_junk_size;
+        amnezia["s2"] = response_packet_junk_size;
+        amnezia["s3"] = cookie_reply_junk_size;
+        amnezia["s4"] = transport_packet_junk_size;
 
-        outbound["h1"] = init_packet_magic_header;
-        outbound["h2"] = response_packet_magic_header;
-        outbound["h3"] = cookie_reply_magic_header;
-        outbound["h4"] = transport_packet_magic_header;
+        // Empty strings are not valid ranges in the new core schema.
+        if (!init_packet_magic_header.trimmed().isEmpty()) amnezia["h1"] = init_packet_magic_header.trimmed();
+        if (!response_packet_magic_header.trimmed().isEmpty()) amnezia["h2"] = response_packet_magic_header.trimmed();
+        if (!cookie_reply_magic_header.trimmed().isEmpty()) amnezia["h3"] = cookie_reply_magic_header.trimmed();
+        if (!transport_packet_magic_header.trimmed().isEmpty()) amnezia["h4"] = transport_packet_magic_header.trimmed();
 
-        outbound["i1"] = i1;
-        outbound["i2"] = i2;
-        outbound["i3"] = i3;
-        outbound["i4"] = i4;
-        outbound["i5"] = i5;
+        amnezia["i1"] = i1;
+        amnezia["i2"] = i2;
+        amnezia["i3"] = i3;
+        amnezia["i4"] = i4;
+        amnezia["i5"] = i5;
     }
+    outbound["amnezia"] = amnezia;
 
     result.outbound = outbound;
     return result;
@@ -414,7 +418,7 @@ bool WireguardBean::TryParseJsonAwg(const Configs::Data::Node &obj) {
 
     MTU = obj["mtu"].toInt();
 
-    useSystemInterface = obj["useIntegratedTun"].toBool();
+    useSystemInterface = obj.contains("system") ? obj["system"].toBool() : obj["useIntegratedTun"].toBool();
 
     // -------------------- Peers --------------------
     auto &peersArray = obj["peers"];
@@ -428,25 +432,26 @@ bool WireguardBean::TryParseJsonAwg(const Configs::Data::Node &obj) {
             peerObj["persistent_keepalive_interval"].toInt();
 
     // -------------------- AmneziaWG params --------------------
-    junk_packet_count = obj["jc"].toInt();
-    this->junk_packet_max_size = obj["jmax"].toInt();
-    this->junk_packet_min_size = obj["jmin"].toInt();
+    const auto &params = obj["amnezia"].isObject() ? obj["amnezia"] : obj;
+    junk_packet_count = params["jc"].toInt();
+    this->junk_packet_max_size = params["jmax"].toInt();
+    this->junk_packet_min_size = params["jmin"].toInt();
 
-    this->init_packet_junk_size = obj["s1"].toInt();
-    this->response_packet_junk_size = obj["s2"].toInt();
-    this->cookie_reply_junk_size = obj["s3"].toInt();
-    this->transport_packet_junk_size = obj["s4"].toInt();
+    this->init_packet_junk_size = params["s1"].toInt();
+    this->response_packet_junk_size = params["s2"].toInt();
+    this->cookie_reply_junk_size = params["s3"].toInt();
+    this->transport_packet_junk_size = params["s4"].toInt();
 
-    this->init_packet_magic_header = obj["h1"].toString();
-    this->response_packet_magic_header = obj["h2"].toString();
-    this->cookie_reply_magic_header = obj["h3"].toString();
-    this->transport_packet_magic_header = obj["h4"].toString();
+    this->init_packet_magic_header = params["h1"].toString();
+    this->response_packet_magic_header = params["h2"].toString();
+    this->cookie_reply_magic_header = params["h3"].toString();
+    this->transport_packet_magic_header = params["h4"].toString();
 
-    i1 = obj["i1"].toString();
-    i2 = obj["i2"].toString();
-    i3 = obj["i3"].toString();
-    i4 = obj["i4"].toString();
-    i5 = obj["i5"].toString();
+    i1 = params["i1"].toString();
+    i2 = params["i2"].toString();
+    i3 = params["i3"].toString();
+    i4 = params["i4"].toString();
+    i5 = params["i5"].toString();
 
     return true;
 }
