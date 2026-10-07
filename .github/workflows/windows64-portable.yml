@@ -39,6 +39,7 @@ jobs:
           $deps = "$env:GITHUB_WORKSPACE/vcpkg-deps/installed/x64-windows"
           $thrift = "$deps/tools/thrift/thrift.exe"
           $env:PATH = "$deps/bin;$deps/tools/thrift;$env:PATH"
+          Invoke-WebRequest 'https://raw.githubusercontent.com/qr243vbi/ruleset/refs/heads/rule-set/srslist.json' -OutFile srslist.json
           cmake -S . -B build/gui -G Ninja "-DCMAKE_TOOLCHAIN_FILE=$env:GITHUB_WORKSPACE/vcpkg-deps/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows -DVCPKG_MANIFEST_MODE=OFF "-DCMAKE_PREFIX_PATH=$env:QT6_DIR" "-DTHRIFT_COMPILER=$thrift" -DCMAKE_BUILD_TYPE=Release -DBUILD_GO_PARTS=OFF -DSKIP_UPDATER=ON "-DNKR_VERSION=$version" "-DNKR_DEFAULT_VERSION=$version"
           if ($LASTEXITCODE) { throw 'GUI configuration failed' }
           cmake -S core -B build/core -G Ninja -DGOOS=windows -DGOARCH=amd64 -DSKIP_UPDATER=ON -DGO_MOD_TIDY=OFF -DGO_MOD_VENDOR=OFF -DGENERATE_GO_RPC=OFF "-DTHRIFT_COMPILER=$thrift"
@@ -75,9 +76,9 @@ jobs:
           if ($LASTEXITCODE) { throw 'Xray download failed' }
           Expand-Archive build/xray/Xray-windows-64.zip build/xray/extracted
           Copy-Item build/xray/extracted/xray.exe -Destination $dest
-          $cronet = (Get-ChildItem "$env:USERPROFILE/go/pkg/mod/github.com/sagernet/cronet-go/lib/windows_amd64*" -Filter '*.dll' -Recurse | Select-Object -First 1).FullName
-          if (!$cronet) { throw 'Pinned Cronet library not found' }
-          Copy-Item $cronet -Destination "$dest/libcronet.dll"
+          $cronetModule = go -C core/server list -m -f '{{.Dir}}' github.com/sagernet/cronet-go/lib/windows_amd64
+          if ($LASTEXITCODE -or !(Test-Path "$cronetModule/libcronet.dll")) { throw 'Pinned Cronet library not found' }
+          Copy-Item "$cronetModule/libcronet.dll" -Destination "$dest/libcronet.dll"
           Copy-Item LICENSE -Destination $dest
           @"
           Version: $env:INPUT_VERSION

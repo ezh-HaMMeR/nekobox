@@ -13,6 +13,11 @@ generate_product_version(
         ICON "${CMAKE_SOURCE_DIR}/res/nekobox.ico"
         NAME "nekobox"
         BUNDLE "Iblis"
+        VERSION_MAJOR ${PROJECT_VERSION_MAJOR}
+        VERSION_MINOR ${PROJECT_VERSION_MINOR}
+        VERSION_PATCH ${PROJECT_VERSION_PATCH}
+        VERSION_REVISION ${PROJECT_VERSION_TWEAK}
+        COMMENTS "NekoBox ${NKR_VERSION}"
         COMPANY_NAME "Iblis Corporation"
         COMPANY_COPYRIGHT "nekobox"
         FILE_DESCRIPTION "nekobox"
@@ -30,4 +35,3 @@ elseif (MSVC)
     add_compile_options("/utf-8")
     add_compile_options("/wd4702")
 endif ()
-
