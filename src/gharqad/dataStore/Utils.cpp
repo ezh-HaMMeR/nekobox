@@ -562,6 +562,7 @@ QString DisplayTime(long long time, int formatType) {
   return QLocale().toString(t, QLocale::FormatType(formatType));
 }
 
+#ifndef NKR_VERSION
 const char *getSoftwareVersion() {
   static const char *VERSION_STATIC = nullptr;
   if (VERSION_STATIC == nullptr) {
@@ -575,6 +576,7 @@ const char *getSoftwareVersion() {
   }
   return VERSION_STATIC;
 }
+#endif
 
 int GetQueryIntValue(const QUrlQuery &q, const QString &key, int def) {
   QString str = GetQueryValue(q, key);
